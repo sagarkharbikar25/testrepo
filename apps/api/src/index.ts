@@ -2,8 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/auth.routes';
 import requestRoutes from './routes/request.routes';
-// M4 routes will be imported here
-// import matchRoutes from './routes/match.routes';
+import matchRoutes from './routes/match.routes';
 
 const app = express();
 
@@ -16,9 +15,7 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/requests', requestRoutes);
-
-// M4 routes will be mounted here
-// app.use('/api/matches', matchRoutes);
+app.use('/api/matches', matchRoutes);
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {

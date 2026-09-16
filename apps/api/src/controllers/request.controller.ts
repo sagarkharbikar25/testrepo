@@ -5,8 +5,8 @@ import { z } from 'zod';
 const createRequestSchema = z.object({
   title: z.string().min(3),
   description: z.string().optional(),
-  category: z.enum(['food', 'medicine', 'shelter', 'clothes', 'tutoring', 'transport', 'other']),
-  urgency: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+  category: z.enum(['food', 'medicine', 'shelter', 'clothes', 'tutoring', 'transport', 'other']).optional(),
+  urgency: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
   quantity: z.number().optional(),
   unit: z.string().optional(),
   location_text: z.string().optional(),
@@ -26,11 +26,26 @@ export const createRequest = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Validation failed', details: parseResult.error.format() });
     }
 
+    let { category, urgency, description, title, ...rest } = parseResult.data;
+
+    // Auto-categorize via Gemini if missing
+    if (!category || !urgency) {
+      const textToAnalyze = `${title}. ${description || ''}`;
+      const { categorizeRequestText } = await import('../services/gemini.service');
+      const aiResult = await categorizeRequestText(textToAnalyze);
+      category = category || aiResult.category;
+      urgency = urgency || aiResult.urgency;
+    }
+
     const { data, error } = await supabaseAdmin
       .from('requests')
       .insert({
         requester_id: userId,
-        ...parseResult.data
+        title,
+        description,
+        category,
+        urgency,
+        ...rest
       })
       .select()
       .single();
