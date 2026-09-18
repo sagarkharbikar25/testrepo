@@ -1,4 +1,4 @@
-# Member 3: Backend Developer 2 (Management APIs)
+# Member 3: Backend Developer 2 (Management APIs, Live Routing & Command Telemetry)
 **Branch:** `feature/backend-management`
 **Owned files:**
 ```
@@ -9,148 +9,176 @@ src/app/api/admin/**
 src/types/volunteer.ts, ngo.ts, resource.ts, admin.ts
 src/lib/validation/volunteer.schema.ts, ngo.schema.ts, resource.schema.ts
 ```
-**Do not touch:** `src/app/api/auth/**`, `requests/**`, `ai/**`, `matches/**`, `src/lib/supabase/**` (Member 2) · `src/app/**/*.tsx`, `components/**`, `features/**` (Member 4) · `supabase/migrations/**` (Member 1)
 
-**Depends on:** `profiles`, `help_requests` (Member 2's tables) + `volunteers`, `ngos`, `resources`, and the `get_nearby_requests`/`get_resource_gaps` RPC functions (Member 1's migrations 003–004) — confirm with Member 1 these RPCs exist before you start `GET /api/volunteers/requests` or `GET /api/admin/dashboard`, they will 500 without them.
+**Do not touch:** `src/app/api/auth/**`, `requests/**`, `ai/**`, `matches/**`, `src/lib/supabase/**` (Member 2) · `src/app/**` (all UI pages & components, Member 4) · `supabase/migrations/**` (Member 1)
 
----
-
-## Volunteer Routes
-
-**`POST /api/volunteers/profile`**
-```
-Body: { bio?, is_available, radius_km?, location?, skills: [{category, skill_name}] }
-Flow: upsert volunteers row → delete + re-insert volunteer_skills
-Response 200: { data: VolunteerProfile }
-```
-
-**`GET /api/volunteers/requests`** — nearby open requests
-```
-Flow: get volunteer's location+radius → call get_nearby_requests RPC (Member 1)
-Response 200: { data: Array<HelpRequest & { match_score? }> }
-```
-
-**`POST /api/volunteers/requests/:id/accept`**
-```
-Flow: check status is MATCHING/ASSIGNED/AI_ANALYZED and not already assigned to someone else
-      → UPDATE status='ACCEPTED', assigned_volunteer_id=user.id → insert status_history
-Response 200: { data: { request_id, status: 'ACCEPTED' } }
-Errors: 404 not found, 400 wrong state, 409 already taken by another volunteer
-```
-
-**`POST /api/volunteers/requests/:id/start`** → status='IN_PROGRESS'
-**`POST /api/volunteers/requests/:id/complete`** → status='COMPLETED', completed_at=now(), volunteers.total_completed += 1
-**`PATCH /api/volunteers/availability`** → `{ is_available: boolean }`
+> **Updated Frontend Alignment:** 
+> - The Volunteer module now features **Live GPS & Route** (`/volunteer/map`) with turn-by-turn guidance, distance in km, ETA, drive simulation, and response radius.
+> - The NGO / Admin Command Center now features **Live Volunteer Tracking** and **Stuck-Volunteer Emergency Reroute** to dispatch backup units via alternate diversion routes when roads are waterlogged or blocked.
 
 ---
 
-## NGO & Resource Routes
+## 1. Volunteer Routes
 
-**`POST /api/ngos/profile`** → upsert `{ organization_name, description?, services, registration_number?, website? }`
-**`GET /api/ngos`** → list all NGOs
-**`POST /api/resources`** → verify caller's `profiles.role === 'ngo'` first, then insert
-```
-Body: { name, category, description?, quantity_available, quantity_total, unit?, location, address? }
-```
-**`PATCH /api/resources/:id`** → update `{ quantity_available?, is_active? }`, only if caller owns the resource's NGO
-**`GET /api/resources`** → filterable by `category`, `ngo_id`, `available_only`
-
----
-
-## Admin Routes
-
-**`GET /api/admin/map-data`**
-```
-Response 200: {
-  data: {
-    requests:   Array<{ id, lat, lng, status, urgency, category }>
-    volunteers: Array<{ id, lat, lng, is_available, name }>
-    ngos:       Array<{ id, lat, lng, name, is_verified }>
-    resources:  Array<{ id, lat, lng, name, category, quantity_available }>
+### `GET /api/volunteers/requests` (Nearby Opportunities)
+- **Flow**: Retrieves volunteer's current GPS location and radius from `volunteers` table, then calls `get_nearby_requests` RPC from Member 1.
+- Calculates AI Match Score (0–100) based on volunteer skills and vehicle type vs request requirements.
+- **Response 200**:
+  ```json
+  {
+    "data": [
+      {
+        "id": "d0000000-0000-0000-0000-000000000004",
+        "requesterName": "Sagar Kharbikar",
+        "category": "Medical Transport",
+        "urgency": "CRITICAL",
+        "description": "Urgent cold-chain insulin transport required for senior citizen.",
+        "address": "Flat 302, Green Valley Apartments, Sector 4",
+        "distanceKm": 1.8,
+        "etaMinutes": 5,
+        "matchScore": 94,
+        "itemsNeeded": ["Cold-chain Insulin transport", "Mobility Van"],
+        "householdFlags": ["Elderly Household Member (65+)", "Diabetic"]
+      }
+    ]
   }
-}
-```
+  ```
 
-**`GET /api/admin/dashboard`**
-```
-Response 200: {
-  data: {
-    total_users, total_volunteers, total_ngos,
-    active_requests, completed_requests, available_resources,
-    requests_by_status: Record<string, number>,
-    requests_by_category: Record<string, number>,
-    resource_gaps: ResourceGap[]   // from get_resource_gaps() RPC
+### `POST /api/volunteers/requests/:id/accept`
+- **Flow**:
+  1. Validates request status is available (`REQUESTED`, `AI_ANALYZED`, or `MATCHING`).
+  2. Updates `help_requests`: `status = 'ACCEPTED'`, `assigned_volunteer_id = user.id`.
+  3. Inserts into `request_status_history`.
+  4. Updates `volunteers`: `active_request_id = request.id`.
+  5. Inserts notification for requester:
+     `"Dr. Rahul Sharma accepted your request (REQ-4091). Preparing dispatch."`
+- **Response 200**: `{ data: { requestId: id, status: 'ACCEPTED' } }`
+
+### `POST /api/volunteers/requests/:id/start`
+- Sets `status = 'IN_PROGRESS'`. Emits en-route notification with live ETA to requester.
+
+### `POST /api/volunteers/requests/:id/complete`
+- Sets `status = 'COMPLETED'`, `completed_at = now()`.
+- Increments `volunteers.total_completed += 1`.
+- Emits verification notification to requester and NGO hub.
+
+### `POST /api/volunteers/telemetry` (Live GPS Tracking & Stuck Reporting)
+- **Body**:
+  ```json
+  {
+    "latitude": 21.1458,
+    "longitude": 79.0882,
+    "speed": 42.5,
+    "heading": 180,
+    "isStuck": false,
+    "stuckReason": null // e.g. "Waterlogged / Road Blocked"
   }
-}
-```
-Run the counts via `Promise.all(...)` — sequential awaits here will visibly slow the admin page during the demo.
+  ```
+- **Flow**:
+  Updates `volunteers` row with `current_latitude`, `current_longitude`, and timestamp.
+  If `isStuck === true`, flags the volunteer in `volunteers` table and immediately triggers an incident alert for the NGO Admin Command Map!
 
-**`PATCH /api/admin/verify/:type/:id`** — **this was ambiguous in the original draft; here's the actual fix.**
-
-`type` is `'volunteer'` or `'ngo'`. The two types touch different tables because `volunteers` has **no** `is_verified` column — only `profiles` and `ngos` do:
-
-```typescript
-export async function PATCH(req: NextRequest, { params }: { params: { type: string; id: string } }) {
-  const supabase = createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return unauth()
-
-  const { data: caller } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (caller?.role !== 'admin') return NextResponse.json({ error: { message: 'Admin only' } }, { status: 403 })
-
-  const { is_verified } = await req.json()
-  const { type, id } = params
-
-  // Always update profiles.is_verified — this is the field the UI badge reads for both types
-  const { error: profileErr } = await supabase.from('profiles').update({ is_verified }).eq('id', id)
-  if (profileErr) return serverError(profileErr.message)
-
-  // NGOs additionally carry their own is_verified column — keep both in sync
-  if (type === 'ngo') {
-    const { error: ngoErr } = await supabase.from('ngos').update({ is_verified }).eq('id', id)
-    if (ngoErr) return serverError(ngoErr.message)
-  }
-  // type === 'volunteer' needs no second table — volunteers has no is_verified column
-
-  return NextResponse.json({ data: { id, type, is_verified } })
-}
-```
+### `POST /api/volunteers/profile`
+- Upserts volunteer personal data, vehicle access (`SUV / 4x4`, `Rapid Bike`, etc.), dispatch radius slider (1–25 km), and verified skills tags.
 
 ---
 
-## Validation
+## 2. Live Tactical Routing Engine (`/api/volunteers/route`)
 
-```typescript
-// src/lib/validation/volunteer.schema.ts
-export const volunteerProfileSchema = z.object({
-  bio: z.string().optional(),
-  is_available: z.boolean(),
-  radius_km: z.number().min(1).max(50).optional(),
-  location: z.object({ lat: z.number(), lng: z.number() }).optional(),
-  skills: z.array(z.object({
-    category: z.enum(['medical','food','transportation','education','shelter','general']),
-    skill_name: z.string().min(2),
-  })).optional(),
-})
-```
+- **Query Params**: `?startLat=21.1458&startLng=79.0882&destLat=21.1585&destLng=79.0980`
+- **Flow**:
+  Queries the OSRM Driving Engine (`https://router.project-osrm.org/route/v1/driving/...`) with fallback bezier interpolation:
+  Returns:
+  - `distanceKm`: Real road distance.
+  - `etaMinutes`: Realistic driving time accounting for urban conditions.
+  - `coordinates`: Polyline array of `[lat, lng]` coordinates for Leaflet map drawing.
+  - `turnInstructions`: Maneuver array (`"Turn Right onto Wardha Road in 350m"`, etc.).
+  - `alternateRoute`: Secondary route option (via Ring Road / bypass).
 
 ---
 
-## Hour-by-Hour
+## 3. NGO & Resource Inventory Management
 
-| Hour | Tasks |
-|------|-------|
-| 0–1 | Confirm migrations 003–004 + both RPCs exist (ping Member 1) |
-| 1–2 | `POST /api/volunteers/profile`, `GET /api/volunteers/requests` |
-| 2–3 | accept/start/complete routes, `PATCH availability` |
-| 3–4 | NGO profile, `GET /api/ngos`, `POST/GET /api/resources` |
-| 4–5 | Admin dashboard (parallel queries) + `get_resource_gaps` wiring + map-data route |
-| 5–6 | `PATCH /api/admin/verify/:type/:id`, test all endpoints, fix edge cases |
+### `GET /api/resources`
+- Filterable by `category`, `ngo_id`, and `available_only`.
+- Returns stock levels, units, warehouse location, and safety buffer warnings.
 
-## Pre-merge checklist
-- [ ] `npx tsc --noEmit` — zero errors
-- [ ] `GET /api/volunteers/requests` returns real nearby rows against seed data
-- [ ] Accept sets `assigned_volunteer_id` and rejects a second volunteer's accept with 409
-- [ ] `GET /api/admin/dashboard` returns `resource_gaps` with a real `gap_severity`, not empty
-- [ ] Verify endpoint updates the right table(s) for both `volunteer` and `ngo`
-- [ ] `git diff --name-only HEAD` shows only your owned files
+### `POST /api/resources`
+- Inserts new stock items (e.g. `20L Drinking Water Cans`, `Cold-chain Insulin Packs`, `Emergency Ration Kits`).
+
+### `POST /api/ngo/requests/:id/allocate`
+- NGO Coordinator allocates inventory items directly to an inbound citizen requisition. Decrements `quantity_available` and updates request status.
+
+### `POST /api/ngos/profile`
+- Updates NGO organization credentials, registration number, disaster services, and warehouse address.
+
+---
+
+## 4. Admin Command Operations & Emergency Backup Rerouting
+
+### `GET /api/admin/map-data` (Feeds `CommandMap.tsx`)
+- **Response 200**:
+  ```json
+  {
+    "data": {
+      "incidents": [
+        {
+          "id": "PIN-1",
+          "title": "Emergency Dialysis Transport",
+          "category": "Medical",
+          "urgency": "CRITICAL",
+          "lat": 21.1458,
+          "lng": 79.0882,
+          "assignedUnit": "Dr. Rahul Sharma"
+        }
+      ],
+      "volunteers": [
+        {
+          "id": "VOL-101",
+          "name": "Dr. Rahul Sharma",
+          "lat": 21.1458,
+          "lng": 79.0882,
+          "vehicleType": "SUV / 4x4",
+          "status": "STUCK", // 'AVAILABLE' | 'EN_ROUTE' | 'STUCK'
+          "stuckReason": "Waterlogging on Amravati By-pass (8 mins)",
+          "activeRequestId": "PIN-1"
+        },
+        {
+          "id": "VOL-102",
+          "name": "Unit Bravo (Priya Nair)",
+          "lat": 21.1520,
+          "lng": 79.0950,
+          "vehicleType": "4x4 Off-Road",
+          "status": "AVAILABLE"
+        }
+      ],
+      "warehouses": [
+        {
+          "id": "WH-1",
+          "name": "Central Emergency Logistics Depot",
+          "lat": 21.1390,
+          "lng": 79.0750
+        }
+      ]
+    }
+  }
+  ```
+
+### `POST /api/admin/reroute` (⭐ The Stuck-Volunteer Reroute Feature)
+- **Body**:
+  ```json
+  {
+    "requestId": "d0000000-0000-0000-0000-000000000004",
+    "stuckVolunteerId": "b0000000-0000-0000-0000-000000000002",
+    "backupVolunteerId": "b0000000-0000-0000-0000-000000000099",
+    "reason": "Primary route blocked by flash waterlogging"
+  }
+  ```
+- **Flow**:
+  1. Reassigns `help_requests.assigned_volunteer_id = backupVolunteerId`.
+  2. Updates `request_status_history` with note: `"Admin rerouted mission to backup unit due to road hazard."`
+  3. Sends push notifications:
+     - To **Stuck Volunteer**: `"Mission reassigned to backup unit. Return to safety depot."`
+     - To **Backup Volunteer**: `"PRIORITY RE-ASSIGNMENT: Proceed to Emergency Dialysis Mission via North Flyover."`
+     - To **Requester**: `"Update: Backup responder dispatched via alternate route. New ETA: 7 mins."`
+- **Response 200**: `{ data: { success: true, newAssignedVolunteerId: backupVolunteerId } }`
