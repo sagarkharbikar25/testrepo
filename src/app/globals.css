@@ -1,48 +1,104 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  /* ── Color tokens ── */
+  --color-surface: var(--surface);
+  --color-surface-soft: var(--surface-soft);
   --color-card: var(--card);
+  --color-card-elevated: var(--card-elevated);
   --color-border: var(--border);
+  --color-border-hover: var(--border-hover);
+  --color-navy: var(--obsidian);
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
-  --color-secondary: var(--secondary);
+  --color-cyan: var(--cyan);
+  --color-green: var(--green);
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-muted: var(--muted);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
 
-  --font-sans: var(--font-inter);
+  /* ── Font tokens ── */
+  --font-display: var(--font-plus-jakarta);
+  --font-body: var(--font-inter);
   --font-mono: var(--font-jetbrains-mono);
 }
 
 :root {
-  /* NexoraLink Dark-First Theme */
-  --background: #0f172a; /* slate-900 */
-  --foreground: #f8fafc; /* slate-50 */
-  --card: #1e293b; /* slate-800 */
-  --border: #334155; /* slate-700 */
-  --primary: #2563eb; /* blue-600 */
-  --primary-hover: #1d4ed8; /* blue-700 */
-  --secondary: #7c3aed; /* violet-600 */
-  --success: #059669; /* emerald-600 */
-  --warning: #d97706; /* amber-600 */
-  --danger: #dc2626; /* red-600 */
+  /* ── Luxe Obsidian Black & White Theme (Devnovate Style) ── */
+
+  /* Deep pure blacks & dark glass surfaces */
+  --surface: #000000;
+  --surface-soft: #08080A;
+  --card: #0F0F13;
+  --card-elevated: #16161C;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-hover: rgba(255, 255, 255, 0.25);
+  --obsidian: #050507;
+
+  /* Primary accent — Pure Crisp White */
+  --primary: #FFFFFF;
+  --primary-hover: #E4E4E7;
+  --primary-foreground: #000000;
+
+  /* Luminous accents */
+  --cyan: #00D2FF;
+  --green: #2EEA8D;
+
+  /* High contrast text */
+  --text: #FFFFFF;
+  --text-secondary: #A1A1AA;
+  --muted: #71717A;
+
+  /* Semantic states */
+  --success: #2EEA8D;
+  --warning: #F59E0B;
+  --danger: #EF4444;
 }
 
+/* ── Base body ── */
 body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), sans-serif;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: var(--font-inter), sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Component Base Utilities */
+/* ── Component utilities ── */
 @layer components {
-  .card-base {
+
+  /* Luxe Obsidian Glass Card */
+  .card {
     background-color: var(--card);
     border: 1px solid var(--border);
-    border-radius: 0.75rem; /* rounded-xl */
-    padding: 1rem;
+    border-radius: 1.25rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .card-elevated {
+    background-color: var(--card-elevated);
+    border: 1px solid var(--border-hover);
+    border-radius: 1.25rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  /* Frosted Glass Pill (Devnovate header/badge style) */
+  .glass-pill {
+    background-color: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  /* Glowing Light Beam Lines (horizontal light trails from Devnovate) */
+  .glow-beam {
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.7) 50%, transparent 100%);
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+  }
+
+  /* White spotlight ambient background */
+  .spotlight-bg {
+    background: radial-gradient(circle at 50% 10%, rgba(255, 255, 255, 0.08) 0%, rgba(0, 0, 0, 0) 70%);
   }
 }
